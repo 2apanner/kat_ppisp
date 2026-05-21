@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,11 +15,10 @@
  * limitations under the License.
  */
 
-#include "bindings.h"
+#pragma once
 
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("ppisp_forward", &ppisp_forward_tensor);
-    m.def("ppisp_backward", &ppisp_backward_tensor);
-    m.def("ppisp_regularization_forward", &ppisp_regularization_forward_tensor);
-    m.def("ppisp_regularization_backward", &ppisp_regularization_backward_tensor);
-}
+constexpr int PPISP_BLOCK_SIZE = 256;
+constexpr int PPISP_COLOR_PARAMS = 8;
+constexpr int PPISP_FRAME_MEAN_SUMS_SIZE = 1 + PPISP_COLOR_PARAMS;
+constexpr int PPISP_CRF_PARAMS_PER_CHANNEL = 4;
+constexpr int PPISP_VIGNETTING_PARAMS_PER_CHANNEL = 5;

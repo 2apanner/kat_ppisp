@@ -15,6 +15,9 @@ This directory contains tests for the PPISP CUDA implementation.
   - Uses `torch.autograd.gradcheck` for independent gradient validation
   - Gradient magnitude sanity checks
 
+- **test_regularization_loss.py**: Regularization loss tests
+  - Compares CUDA regularization loss and gradients against the PyTorch formula
+
 - **torch_reference.py**: PyTorch reference implementation (not tests)
   - Pure PyTorch implementation of PPISP pipeline
   - Used as ground truth for correctness testing
@@ -50,4 +53,5 @@ pytest tests/test_cuda_vs_torch.py::test_forward_basic -v
 - Different batch sizes (1 to 4096 pixels)
 - Multiple cameras and frames configurations
 - Disabled effects (camera_idx=-1, frame_idx=-1)
+- CUDA regularization loss and gradient correctness
 - Gradient magnitude sanity checks
