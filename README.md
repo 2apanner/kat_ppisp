@@ -61,8 +61,6 @@ from ppisp import PPISP, PPISPConfig
 
 # 1. Initialize
 ppisp = PPISP(num_cameras=3, num_frames=500)
-# Optional faster regularization loss:
-# ppisp = PPISP(num_cameras=3, num_frames=500, use_cuda_regularization_loss=True)
 
 # 2. Create optimizers and scheduler
 ppisp_optimizers = ppisp.create_optimizers()
@@ -100,8 +98,7 @@ rgb_out = ppisp(rgb_raw, pixel_coords, resolution=(W, H), camera_idx=camera_idx,
 ```
 
 Use `PPISPConfig` to customize regularization weights, learning rates, and controller activation timing.
-Set `use_cuda_regularization_loss=True` in `PPISPConfig` or the `PPISP` constructor to opt into
-the fused CUDA regularization loss. The default remains the original PyTorch loss path.
+PPISP regularization loss uses the fused CUDA implementation.
 
 ### Controller Distillation Mode
 

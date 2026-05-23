@@ -30,7 +30,6 @@ from dataclasses import dataclass
 
 import torch
 from torch import nn
-import torch.nn.functional as F
 
 import ppisp_cuda as _C
 
@@ -118,11 +117,6 @@ class PPISPConfig:
     """
 
     # Regularization weights
-    use_cuda_regularization_loss: bool = False
-    """Use the fused CUDA implementation for PPISP regularization loss.
-    Defaults to False to preserve the original PyTorch loss path.
-    """
-
     exposure_mean: float = 1.0
     """Encourage exposure mean ~ 0 to resolve SH <-> exposure ambiguity."""
 
@@ -529,8 +523,6 @@ class PPISP(nn.Module):
         num_cameras: Number of cameras in the scene
         num_frames: Total number of frames across all cameras
         config: PPISP configuration (regularization, optimizer, scheduler settings)
-        use_cuda_regularization_loss: Use the fused CUDA regularization loss.
-            Defaults to False.
     """
 
     def __init__(
@@ -538,14 +530,10 @@ class PPISP(nn.Module):
         num_cameras: int,
         num_frames: int,
         config: PPISPConfig = DEFAULT_PPISP_CONFIG,
-        use_cuda_regularization_loss: bool = False,
     ):
         super().__init__()
 
         self.config = config
-        self.use_cuda_regularization_loss = (
-            config.use_cuda_regularization_loss or use_cuda_regularization_loss
-        )
 
         # Warn if controller is enabled but will never train (ratio >= 1.0)
         if config.use_controller and config.controller_activation_ratio >= 1.0:
@@ -631,7 +619,6 @@ class PPISP(nn.Module):
         cls,
         state_dict: dict,
         config: PPISPConfig = DEFAULT_PPISP_CONFIG,
-        use_cuda_regularization_loss: bool = False,
     ) -> "PPISP":
         """Create PPISP instance from a state dict.
 
@@ -641,8 +628,6 @@ class PPISP(nn.Module):
         Args:
             state_dict: State dict from a saved PPISP module (via state_dict())
             config: PPISP configuration (default: DEFAULT_PPISP_CONFIG)
-            use_cuda_regularization_loss: Use the fused CUDA regularization loss.
-                Defaults to False.
 
         Returns:
             New PPISP instance with loaded state
@@ -657,7 +642,6 @@ class PPISP(nn.Module):
             num_cameras=num_cameras,
             num_frames=num_frames,
             config=config,
-            use_cuda_regularization_loss=use_cuda_regularization_loss,
         )
         instance.load_state_dict(state_dict)
 
@@ -805,51 +789,6 @@ class PPISP(nn.Module):
             Single scalar tensor with the total weighted regularization loss.
         """
         cfg = self.config
-        if not self.use_cuda_regularization_loss:
-            total_loss = torch.tensor(0.0, device=self.exposure_params.device)
-
-            # Exposure mean regularization (fix SH <-> exposure ambiguity)
-            if cfg.exposure_mean > 0:
-                exposure_residual = self.exposure_params.mean()
-                total_loss = total_loss + cfg.exposure_mean * F.smooth_l1_loss(
-                    exposure_residual, torch.zeros_like(exposure_residual), beta=0.1
-                )
-
-            # Vignetting center loss: optical center should be near image center (0, 0)
-            if cfg.vig_center > 0:
-                # [num_cameras, 3, 2]
-                vig_optical_center = self.vignetting_params[:, :, :2]
-                # [num_cameras, 3]
-                vig_center = (vig_optical_center ** 2).sum(dim=-1)
-                total_loss = total_loss + cfg.vig_center * vig_center.mean()
-
-            # Vignetting non-positivity loss: alpha coefficients should be <= 0
-            if cfg.vig_non_pos > 0:
-                # [num_cameras, 3, NUM_VIGNETTING_ALPHA_TERMS]
-                vig_alphas = self.vignetting_params[:, :, 2:]
-                vig_non_pos = F.relu(vig_alphas)  # penalty for positive values
-                total_loss = total_loss + cfg.vig_non_pos * vig_non_pos.mean()
-
-            # Vignetting channel variance
-            if cfg.vig_channel > 0:
-                total_loss = total_loss + cfg.vig_channel * \
-                    self.vignetting_params.var(dim=1, unbiased=False).mean()
-
-            # Color mean regularization using ZCA block-diagonal matrix
-            if cfg.color_mean > 0:
-                color_offsets = self.color_params @ self.color_pinv_block_diag
-                color_residual = color_offsets.mean(dim=0)
-                total_loss = total_loss + cfg.color_mean * F.smooth_l1_loss(
-                    color_residual, torch.zeros_like(color_residual), beta=0.005, reduction="mean"
-                )
-
-            # CRF channel variance
-            if cfg.crf_channel > 0:
-                total_loss = total_loss + cfg.crf_channel * \
-                    self.crf_params.var(dim=1, unbiased=False).mean()
-
-            return total_loss
-
         return _PPISPRegularizationFunction.apply(
             self.exposure_params,
             self.vignetting_params,

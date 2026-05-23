@@ -87,7 +87,6 @@ def _regularization_loss_torch(module: ppisp.PPISP) -> torch.Tensor:
 def _make_config(**overrides) -> ppisp.PPISPConfig:
     cfg = ppisp.PPISPConfig(
         use_controller=False,
-        use_cuda_regularization_loss=True,
         exposure_mean=0.7,
         vig_center=0.03,
         vig_channel=0.2,
@@ -185,33 +184,16 @@ def _assert_loss_and_grads_match(
         )
 
 
-def test_regularization_loss_constructor_cuda_override():
-    cfg = _make_config(use_cuda_regularization_loss=False)
-    module_config = ppisp.PPISP(
-        num_cameras=4,
-        num_frames=9,
-        config=_make_config(use_cuda_regularization_loss=True),
-    )
-    module_cuda = ppisp.PPISP(
-        num_cameras=4,
-        num_frames=9,
-        config=cfg,
-        use_cuda_regularization_loss=True,
-    )
+def test_regularization_loss_from_state_dict_matches_torch_reference():
+    cfg = _make_config()
+    module_cuda = ppisp.PPISP(num_cameras=4, num_frames=9, config=cfg)
     module_torch = ppisp.PPISP(num_cameras=4, num_frames=9, config=cfg)
-    assert module_config.use_cuda_regularization_loss is True
-    assert module_cuda.use_cuda_regularization_loss is True
-    assert module_torch.use_cuda_regularization_loss is False
+    _clone_params(_make_module(seed=5, config=cfg), module_cuda)
 
-    restored = ppisp.PPISP.from_state_dict(
-        module_cuda.state_dict(),
-        config=cfg,
-        use_cuda_regularization_loss=True,
-    )
-    assert restored.use_cuda_regularization_loss is True
+    restored = ppisp.PPISP.from_state_dict(module_cuda.state_dict(), config=cfg)
 
     _clone_params(module_cuda, module_torch)
-    _assert_loss_and_grads_match(module_cuda, module_torch)
+    _assert_loss_and_grads_match(restored, module_torch)
 
 
 def test_regularization_loss_matches_torch_reference():
@@ -368,7 +350,6 @@ def test_regularization_loss_mixed_weights_match_torch_reference(
 def test_regularization_loss_zero_weights_has_zero_grads():
     cfg = ppisp.PPISPConfig(
         use_controller=False,
-        use_cuda_regularization_loss=True,
         exposure_mean=0.0,
         vig_center=0.0,
         vig_channel=0.0,
