@@ -29,7 +29,6 @@ parameters from rendered radiance images.
 from dataclasses import dataclass
 
 import torch
-import torch.nn.functional as F
 from torch import nn
 
 import ppisp_cuda as _C
@@ -260,6 +259,72 @@ class _PPISPFunction(torch.autograd.Function):
             None,  # camera_idx
             None,  # frame_idx
         )
+
+
+class _PPISPRegularizationFunction(torch.autograd.Function):
+    """Custom autograd function for the PPISP regularization loss."""
+
+    @staticmethod
+    def forward(
+        ctx,
+        exposure_params: torch.Tensor,
+        vignetting_params: torch.Tensor,
+        color_params: torch.Tensor,
+        crf_params: torch.Tensor,
+        exposure_mean_weight: float,
+        vig_center_weight: float,
+        vig_channel_weight: float,
+        vig_non_pos_weight: float,
+        color_mean_weight: float,
+        crf_channel_weight: float,
+    ) -> torch.Tensor:
+        exposure_params = exposure_params.float().contiguous()
+        vignetting_params = vignetting_params.float().contiguous()
+        color_params = color_params.float().contiguous()
+        crf_params = crf_params.float().contiguous()
+
+        weights = (
+            float(exposure_mean_weight),
+            float(vig_center_weight),
+            float(vig_channel_weight),
+            float(vig_non_pos_weight),
+            float(color_mean_weight),
+            float(crf_channel_weight),
+        )
+
+        with torch.cuda.device(exposure_params.device):
+            loss, frame_mean_sums = _C.ppisp_regularization_forward(
+                exposure_params,
+                vignetting_params,
+                color_params,
+                crf_params,
+                *weights,
+            )
+
+        ctx.save_for_backward(
+            exposure_params, vignetting_params, color_params, crf_params, frame_mean_sums
+        )
+        ctx.weights = weights
+        return loss
+
+    @staticmethod
+    def backward(ctx, v_loss: torch.Tensor):
+        exposure_params, vignetting_params, color_params, crf_params, frame_mean_sums = (
+            ctx.saved_tensors
+        )
+
+        with torch.cuda.device(exposure_params.device):
+            grads = _C.ppisp_regularization_backward(
+                exposure_params,
+                vignetting_params,
+                color_params,
+                crf_params,
+                v_loss.contiguous(),
+                frame_mean_sums,
+                *ctx.weights,
+            )
+
+        return grads + (None,) * 6
 
 
 # =============================================================================
@@ -573,8 +638,11 @@ class PPISP(nn.Module):
         num_frames = state_dict["exposure_params"].shape[0]
 
         # Create instance with inferred dimensions
-        instance = cls(num_cameras=num_cameras,
-                       num_frames=num_frames, config=config)
+        instance = cls(
+            num_cameras=num_cameras,
+            num_frames=num_frames,
+            config=config,
+        )
         instance.load_state_dict(state_dict)
 
         return instance
@@ -721,49 +789,18 @@ class PPISP(nn.Module):
             Single scalar tensor with the total weighted regularization loss.
         """
         cfg = self.config
-        total_loss = torch.tensor(0.0, device=self.exposure_params.device)
-
-        # Exposure mean regularization (fix SH <-> exposure ambiguity)
-        if cfg.exposure_mean > 0:
-            exposure_residual = self.exposure_params.mean()
-            total_loss = total_loss + cfg.exposure_mean * F.smooth_l1_loss(
-                exposure_residual, torch.zeros_like(exposure_residual), beta=0.1
-            )
-
-        # Vignetting center loss: optical center should be near image center (0, 0)
-        if cfg.vig_center > 0:
-            # [num_cameras, 3, 2]
-            vig_optical_center = self.vignetting_params[:, :, :2]
-            # [num_cameras, 3]
-            vig_center = (vig_optical_center ** 2).sum(dim=-1)
-            total_loss = total_loss + cfg.vig_center * vig_center.mean()
-
-        # Vignetting non-positivity loss: alpha coefficients should be <= 0
-        if cfg.vig_non_pos > 0:
-            # [num_cameras, 3, NUM_VIGNETTING_ALPHA_TERMS]
-            vig_alphas = self.vignetting_params[:, :, 2:]
-            vig_non_pos = F.relu(vig_alphas)  # penalty for positive values
-            total_loss = total_loss + cfg.vig_non_pos * vig_non_pos.mean()
-
-        # Vignetting channel variance
-        if cfg.vig_channel > 0:
-            total_loss = total_loss + cfg.vig_channel * \
-                self.vignetting_params.var(dim=1, unbiased=False).mean()
-
-        # Color mean regularization using ZCA block-diagonal matrix
-        if cfg.color_mean > 0:
-            color_offsets = self.color_params @ self.color_pinv_block_diag
-            color_residual = color_offsets.mean(dim=0)
-            total_loss = total_loss + cfg.color_mean * F.smooth_l1_loss(
-                color_residual, torch.zeros_like(color_residual), beta=0.005, reduction="mean"
-            )
-
-        # CRF channel variance
-        if cfg.crf_channel > 0:
-            total_loss = total_loss + cfg.crf_channel * \
-                self.crf_params.var(dim=1, unbiased=False).mean()
-
-        return total_loss
+        return _PPISPRegularizationFunction.apply(
+            self.exposure_params,
+            self.vignetting_params,
+            self.color_params,
+            self.crf_params,
+            cfg.exposure_mean,
+            cfg.vig_center,
+            cfg.vig_channel,
+            cfg.vig_non_pos,
+            cfg.color_mean,
+            cfg.crf_channel,
+        )
 
     def create_optimizers(self) -> list[torch.optim.Optimizer]:
         """Create optimizers for PPISP parameters.

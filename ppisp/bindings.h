@@ -20,6 +20,8 @@
 
 #include <torch/extension.h>
 
+#include "src/ppisp_constants.h"
+
 // =============================================================================
 // Forward pass for PPISP image processing
 // =============================================================================
@@ -56,6 +58,48 @@ void ppisp_backward(
     // Dimensions
     int num_pixels, int num_cameras, int num_frames, int resolution_w, int resolution_h,
     int camera_idx, int frame_idx);
+
+// =============================================================================
+// Forward/backward for PPISP regularization loss
+// =============================================================================
+
+void ppisp_regularization_forward(
+    // Parameters (per-frame/per-camera)
+    const float *exposure_params,    // [num_frames]
+    const float *vignetting_params,  // [num_cameras, 3, 5]
+    const float *color_params,       // [num_frames, 8]
+    const float *crf_params,         // [num_cameras, 3, 4]
+    // Outputs
+    float *loss_out,         // scalar
+    float *frame_mean_sums,  // [PPISP_FRAME_MEAN_SUMS_SIZE]
+    // Dimensions
+    int num_cameras, int num_frames,
+    // Weights
+    float exposure_mean_weight, float vig_center_weight,
+    float vig_channel_weight, float vig_non_pos_weight, float color_mean_weight,
+    float crf_channel_weight);
+
+void ppisp_regularization_backward(
+    // Parameters (per-frame/per-camera)
+    const float *exposure_params,    // [num_frames]
+    const float *vignetting_params,  // [num_cameras, 3, 5]
+    const float *color_params,       // [num_frames, 8]
+    const float *crf_params,         // [num_cameras, 3, 4]
+    // Upstream gradient
+    const float *grad_loss,  // scalar
+    // Gradients w.r.t. parameters
+    float *grad_exposure_params,    // [num_frames]
+    float *grad_vignetting_params,  // [num_cameras, 3, 5]
+    float *grad_color_params,       // [num_frames, 8]
+    float *grad_crf_params,         // [num_cameras, 3, 4]
+    // Saved forward output
+    float *frame_mean_sums,  // [PPISP_FRAME_MEAN_SUMS_SIZE]
+    // Dimensions
+    int num_cameras, int num_frames,
+    // Weights
+    float exposure_mean_weight,
+    float vig_center_weight, float vig_channel_weight, float vig_non_pos_weight,
+    float color_mean_weight, float crf_channel_weight);
 
 // =============================================================================
 // PyTorch tensor wrappers
@@ -111,6 +155,62 @@ ppisp_backward_tensor(torch::Tensor exposure_params, torch::Tensor vignetting_pa
 
     return std::make_tuple(v_exposure_params, v_vignetting_params, v_color_params, v_crf_params,
                            v_rgb_in);
+}
+
+std::tuple<torch::Tensor, torch::Tensor> ppisp_regularization_forward_tensor(
+    torch::Tensor exposure_params,    // [num_frames]
+    torch::Tensor vignetting_params,  // [num_cameras, 3, 5]
+    torch::Tensor color_params,       // [num_frames, 8]
+    torch::Tensor crf_params,         // [num_cameras, 3, 4]
+    float exposure_mean_weight, float vig_center_weight,
+    float vig_channel_weight, float vig_non_pos_weight, float color_mean_weight,
+    float crf_channel_weight) {
+    int num_cameras = crf_params.size(0);
+    int num_frames = exposure_params.size(0);
+
+    auto loss = torch::zeros({}, exposure_params.options());
+    auto frame_mean_sums = torch::zeros({PPISP_FRAME_MEAN_SUMS_SIZE}, exposure_params.options());
+
+    ppisp_regularization_forward(
+        exposure_params.data_ptr<float>(), vignetting_params.data_ptr<float>(),
+        color_params.data_ptr<float>(), crf_params.data_ptr<float>(), loss.data_ptr<float>(),
+        frame_mean_sums.data_ptr<float>(), num_cameras, num_frames, exposure_mean_weight,
+        vig_center_weight, vig_channel_weight, vig_non_pos_weight, color_mean_weight,
+        crf_channel_weight);
+
+    return std::make_tuple(loss, frame_mean_sums);
+}
+
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+ppisp_regularization_backward_tensor(
+    torch::Tensor exposure_params,    // [num_frames]
+    torch::Tensor vignetting_params,  // [num_cameras, 3, 5]
+    torch::Tensor color_params,       // [num_frames, 8]
+    torch::Tensor crf_params,         // [num_cameras, 3, 4]
+    torch::Tensor grad_loss,          // scalar
+    torch::Tensor frame_mean_sums,    // [PPISP_FRAME_MEAN_SUMS_SIZE]
+    float exposure_mean_weight, float vig_center_weight, float vig_channel_weight,
+    float vig_non_pos_weight, float color_mean_weight, float crf_channel_weight) {
+    int num_cameras = crf_params.size(0);
+    int num_frames = exposure_params.size(0);
+
+    auto grad_loss_contig = grad_loss.contiguous();
+    auto grad_exposure_params = torch::zeros_like(exposure_params);
+    auto grad_vignetting_params = torch::zeros_like(vignetting_params);
+    auto grad_color_params = torch::zeros_like(color_params);
+    auto grad_crf_params = torch::zeros_like(crf_params);
+
+    ppisp_regularization_backward(
+        exposure_params.data_ptr<float>(), vignetting_params.data_ptr<float>(),
+        color_params.data_ptr<float>(), crf_params.data_ptr<float>(), grad_loss_contig.data_ptr<float>(),
+        grad_exposure_params.data_ptr<float>(), grad_vignetting_params.data_ptr<float>(),
+        grad_color_params.data_ptr<float>(), grad_crf_params.data_ptr<float>(),
+        frame_mean_sums.data_ptr<float>(), num_cameras, num_frames, exposure_mean_weight,
+        vig_center_weight, vig_channel_weight, vig_non_pos_weight, color_mean_weight,
+        crf_channel_weight);
+
+    return std::make_tuple(grad_exposure_params, grad_vignetting_params, grad_color_params,
+                           grad_crf_params);
 }
 
 #endif  // _PPISP_BINDINGS_H_INC

@@ -98,6 +98,7 @@ rgb_out = ppisp(rgb_raw, pixel_coords, resolution=(W, H), camera_idx=camera_idx,
 ```
 
 Use `PPISPConfig` to customize regularization weights, learning rates, and controller activation timing.
+PPISP regularization loss uses the fused CUDA implementation.
 
 ### Controller Distillation Mode
 
