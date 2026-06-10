@@ -250,21 +250,6 @@ __device__ __forceinline__ float4 clamp(const float4 &v, float min_val, float ma
                        fminf(fmaxf(v.z, min_val), max_val), fminf(fmaxf(v.w, min_val), max_val));
 }
 
-// Lerp (linear interpolation) - optimized with FMA
-__device__ __forceinline__ float lerp(float a, float b, float t) { return __fmaf_rn(b - a, t, a); }
-
-__device__ __forceinline__ float2 lerp(const float2 &a, const float2 &b, float t) {
-    return make_float2(lerp(a.x, b.x, t), lerp(a.y, b.y, t));
-}
-
-__device__ __forceinline__ float3 lerp(const float3 &a, const float3 &b, float t) {
-    return make_float3(lerp(a.x, b.x, t), lerp(a.y, b.y, t), lerp(a.z, b.z, t));
-}
-
-__device__ __forceinline__ float4 lerp(const float4 &a, const float4 &b, float t) {
-    return make_float4(lerp(a.x, b.x, t), lerp(a.y, b.y, t), lerp(a.z, b.z, t), lerp(a.w, b.w, t));
-}
-
 // Element-wise pow (use __powf for speed)
 __device__ __forceinline__ float2 pow(const float2 &v, float exp) {
     return make_float2(__powf(v.x, exp), __powf(v.y, exp));
