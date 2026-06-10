@@ -919,8 +919,7 @@ __device__ __forceinline__ void apply_crf_ppisp_bwd(const float3 &rgb_in,
         // center + toe b = 1 - a
 
         // NOTE: In Slang, the computation is structured as:
-        //   1. Vectorially compute: float3 a = (shoulders * centers) / lerp(toes, shoulders,
-        //   centers)
+        //   1. Vectorially compute: float3 a = (shoulders * centers) / ((shoulders - toes) * centers + toes)
         //   2. Per-channel loop: float c = centers[i]; ... use c in divisions
         // The key is that 'centers' is used in BOTH places, but Slang's autodiff
         // only computes gradients through the VECTORIAL use (#1), not through
