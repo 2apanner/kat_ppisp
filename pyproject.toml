@@ -20,7 +20,13 @@ version = {attr = "ppisp._version.__version__"}
 [tool.setuptools]
 include-package-data = false
 
+[project.optional-dependencies]
+nerfstudio = ["nerfstudio", "gsplat", "pytorch-msssim"]
+
+[project.entry-points."nerfstudio.method_configs"]
+splatfacto-ppisp = "katada.splatfacto_ppisp:splatfacto_ppisp_method"
+
 [tool.setuptools.packages.find]
-include = ["ppisp"]
+include = ["ppisp", "katada"]
 exclude = ["ppisp.src", "tests", "tests.*"]
 
