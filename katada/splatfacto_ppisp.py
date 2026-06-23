@@ -63,18 +63,17 @@ class SplatfactoPPISPModel(SplatfactoModel):
         self._ppisp_optimizers: list[torch.optim.Optimizer] | None = None
         self._ppisp_schedulers: list[torch.optim.lr_scheduler.LRScheduler] | None = None
         self._scene_frozen = False
-
-    def _ensure_ppisp_optimizers(self, max_iters: int) -> None:
-        if self._ppisp_optimizers is not None:
-            return
+        max_iters = max(1, int(self.config.ppisp_max_optimization_iters))
         self._ppisp_optimizers = self.ppisp.create_optimizers()
         self._ppisp_schedulers = self.ppisp.create_schedulers(self._ppisp_optimizers, max_iters)
+        self._ppisp_activation_step = int(
+            ppisp_config.controller_activation_ratio * max_iters
+        )
 
     def _maybe_freeze_scene(self, step: int) -> None:
         if self._scene_frozen:
             return
-        activation = self.ppisp._controller_activation_step
-        if activation < 0 or step < activation:
+        if step < self._ppisp_activation_step:
             return
         if not self.ppisp.config.controller_distillation:
             return
@@ -116,10 +115,6 @@ class SplatfactoPPISPModel(SplatfactoModel):
         training_callback_attributes: TrainingCallbackAttributes,
     ) -> List[TrainingCallback]:
         callbacks = list(super().get_training_callbacks(training_callback_attributes))
-        max_iters = training_callback_attributes.trainer.max_num_iterations
-
-        def init_ppisp(step: int) -> None:
-            self._ensure_ppisp_optimizers(max_iters)
 
         def after_train(step: int) -> None:
             if self._ppisp_optimizers is None:
@@ -132,13 +127,6 @@ class SplatfactoPPISPModel(SplatfactoModel):
                 for scheduler in self._ppisp_schedulers:
                     scheduler.step()
 
-        callbacks.append(
-            TrainingCallback(
-                where_to_run=[TrainingCallbackLocation.BEFORE_TRAIN_ITERATION],
-                update_every_num_iters=1,
-                func=init_ppisp,
-            )
-        )
         callbacks.append(
             TrainingCallback(
                 where_to_run=[TrainingCallbackLocation.AFTER_TRAIN_ITERATION],
@@ -160,6 +148,8 @@ class SplatfactoPPISPModelConfig(SplatfactoModelConfig):
     """Train PPISP controller after this fraction of total iterations."""
     ppisp_controller_distillation: bool = True
     """Freeze scene + PPISP params when training the controller."""
+    ppisp_max_optimization_iters: int = 7500
+    """Must match ns-train --max-num-iterations (set by Colab runner)."""
 
 
 splatfacto_ppisp_method = MethodSpecification(
