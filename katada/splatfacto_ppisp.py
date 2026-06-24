@@ -160,10 +160,10 @@ class SplatfactoPPISPModelConfig(SplatfactoModelConfig):
 splatfacto_ppisp_method = MethodSpecification(
     config=TrainerConfig(
         method_name="splatfacto-ppisp",
-        steps_per_eval_image=100,
+        steps_per_eval_image=0,
         steps_per_eval_batch=0,
         steps_per_save=2000,
-        steps_per_eval_all_images=1000,
+        steps_per_eval_all_images=0,
         max_num_iterations=30000,
         mixed_precision=False,
         pipeline=VanillaPipelineConfig(
