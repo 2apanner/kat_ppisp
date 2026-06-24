@@ -39,7 +39,10 @@ def _resolve_frame_idx(camera: Cameras, *, training: bool) -> int:
     return 0
 
 
-def _resolve_camera_idx(camera: Cameras) -> int:
+def _resolve_camera_idx(camera: Cameras, *, num_cameras: int) -> int:
+    """Physical camera id. Nerfstudio `cam_idx` is per-image; one-drone orbit always uses camera 0."""
+    if num_cameras <= 1:
+        return 0
     meta = camera.metadata or {}
     return int(meta.get("cam_idx", 0))
 
@@ -93,7 +96,7 @@ class SplatfactoPPISPModel(SplatfactoModel):
             return outputs
 
         height, width = int(rgb.shape[0]), int(rgb.shape[1])
-        camera_idx = _resolve_camera_idx(camera)
+        camera_idx = _resolve_camera_idx(camera, num_cameras=self.config.num_cameras)
         frame_idx = _resolve_frame_idx(camera, training=self.training)
 
         outputs["rgb_raw"] = rgb

@@ -7,7 +7,8 @@ name = "ppisp"
 dynamic = ["version"]
 description = "CUDA extension for PPISP"
 requires-python = ">=3.10"
-dependencies = ["torch", "matplotlib", "numpy"]
+# torch is a runtime dep but omitted here so `pip install ppisp` does not upgrade Colab torch
+dependencies = ["matplotlib", "numpy"]
 license = { file = "LICENSE" }
 readme = "README.md"
 authors = [
