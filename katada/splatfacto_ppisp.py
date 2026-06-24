@@ -17,7 +17,7 @@ from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.configs.base_config import ViewerConfig
 from nerfstudio.data.datamanagers.full_images_datamanager import FullImageDatamanagerConfig
 from nerfstudio.data.dataparsers.nerfstudio_dataparser import NerfstudioDataParserConfig
-from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes, TrainingCallbackLocation
+from nerfstudio.engine.callbacks import TrainingCallbackAttributes
 from nerfstudio.engine.optimizers import AdamOptimizerConfig
 from nerfstudio.engine.schedulers import ExponentialDecaySchedulerConfig
 from nerfstudio.engine.trainer import TrainerConfig
@@ -51,6 +51,7 @@ class SplatfactoPPISPModel(SplatfactoModel):
     """Splatfacto with physically-plausible ISP post-processing on rendered RGB."""
 
     config: SplatfactoPPISPModelConfig
+    _train_info: dict | None = None
 
     def populate_modules(self) -> None:
         super().populate_modules()
@@ -86,6 +87,17 @@ class SplatfactoPPISPModel(SplatfactoModel):
             param.requires_grad = False
         self._scene_frozen = True
 
+    def _ppisp_after_train(self, step: int) -> None:
+        if self._ppisp_optimizers is None:
+            return
+        self._maybe_freeze_scene(step)
+        for optimizer in self._ppisp_optimizers:
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+        if self._ppisp_schedulers:
+            for scheduler in self._ppisp_schedulers:
+                scheduler.step()
+
     def get_outputs(self, camera: Cameras) -> Dict[str, Union[Tensor, List]]:
         outputs = super().get_outputs(camera)
         if not isinstance(camera, Cameras) or "rgb" not in outputs:
@@ -94,6 +106,10 @@ class SplatfactoPPISPModel(SplatfactoModel):
         rgb = outputs["rgb"]
         if rgb.dim() != 3:
             return outputs
+
+        # Keep rasterization info (means2d + retain_grad) before PPISP forward; densify uses this.
+        if self.training and isinstance(self.info, dict):
+            self._train_info = self.info
 
         height, width = int(rgb.shape[0]), int(rgb.shape[1])
         camera_idx = _resolve_camera_idx(camera, num_cameras=self.config.num_cameras)
@@ -108,6 +124,17 @@ class SplatfactoPPISPModel(SplatfactoModel):
         )
         return outputs
 
+    def step_post_backward(self, step: int) -> None:
+        """Densify from cached train info — self.info may be stale after PPISP / logging."""
+        info_live = self.info
+        if self._train_info is not None:
+            self.info = self._train_info
+        try:
+            super().step_post_backward(step)
+        finally:
+            self.info = info_live
+        self._ppisp_after_train(step)
+
     def get_loss_dict(self, outputs, batch, metrics_dict=None) -> Dict[str, Tensor]:
         loss_dict = super().get_loss_dict(outputs, batch, metrics_dict)
         loss_dict["ppisp_reg"] = self.ppisp.get_regularization_loss()
@@ -117,27 +144,8 @@ class SplatfactoPPISPModel(SplatfactoModel):
         self,
         training_callback_attributes: TrainingCallbackAttributes,
     ) -> List[TrainingCallback]:
-        callbacks = list(super().get_training_callbacks(training_callback_attributes))
-
-        def after_train(step: int) -> None:
-            if self._ppisp_optimizers is None:
-                return
-            self._maybe_freeze_scene(step)
-            for optimizer in self._ppisp_optimizers:
-                optimizer.step()
-                optimizer.zero_grad(set_to_none=True)
-            if self._ppisp_schedulers:
-                for scheduler in self._ppisp_schedulers:
-                    scheduler.step()
-
-        callbacks.append(
-            TrainingCallback(
-                where_to_run=[TrainingCallbackLocation.AFTER_TRAIN_ITERATION],
-                update_every_num_iters=1,
-                func=after_train,
-            )
-        )
-        return callbacks
+        # PPISP optimizer steps run inside step_post_backward (after gsplat densify).
+        return super().get_training_callbacks(training_callback_attributes)
 
 
 @dataclass
