@@ -147,6 +147,8 @@ class SplatfactoPPISPModelConfig(SplatfactoModelConfig):
     _target: Type = field(default_factory=lambda: SplatfactoPPISPModel)
     num_cameras: int = 1
     """Number of physical cameras (1 for single-drone captures)."""
+    use_absgrad: bool = False
+    """Off by default on Colab — avoids gsplat absgrad densify crashes with PPISP forward."""
     ppisp_controller_activation_ratio: float = 0.8
     """Train PPISP controller after this fraction of total iterations."""
     ppisp_controller_distillation: bool = True
